@@ -19,22 +19,31 @@ jobs:
   split-and-upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Download file
+      - name: Download file with original name
         run: |
-          curl -L -o original_file "${{ github.event.inputs.file_url }}"
+          # Get filename from URL or Content-Disposition
+          FILENAME=$(curl -s -L -I "${{ github.event.inputs.file_url }}" | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | tail -1)
+          if [ -z "$FILENAME" ]; then
+            FILENAME=$(basename "${{ github.event.inputs.file_url }}" | cut -d '?' -f1)
+          fi
+          if [ -z "$FILENAME" ]; then
+            FILENAME="downloaded_file"
+          fi
+          # Add timestamp
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          NAME="${FILENAME%.*}_${TIMESTAMP}.${FILENAME##*.}"
+          curl -L -o "$NAME" "${{ github.event.inputs.file_url }}"
+          echo "ORIGINAL_NAME=$NAME" >> $GITHUB_ENV
 
       - name: Split into 45MB parts
         run: |
-          SIZE=$(stat -c%s "original_file")
+          SIZE=$(stat -c%s "$ORIGINAL_NAME")
           if [ $SIZE -gt 45000000 ]; then
             echo "File larger than 45MB, splitting..."
-            split -b 45m original_file part.
-            # Rename parts to part.aa, part.ab, etc.
-            ls part.* | while read f; do mv "$f" "${f}.part"; done
-            rm original_file
+            split -b 45m "$ORIGINAL_NAME" part.
+            rm "$ORIGINAL_NAME"
             echo "SPLIT=true" >> $GITHUB_ENV
           else
-            mv original_file file.zip
             echo "SPLIT=false" >> $GITHUB_ENV
           fi
 
@@ -46,7 +55,14 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            part.*.part
-            file.zip
+            part.*
+            *.zip
+            *.tar.gz
+            *.tar
+            *.7z
+            *.pdf
+            *.jpg
+            *.png
+            *.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
