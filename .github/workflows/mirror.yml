@@ -1,0 +1,50 @@
+name: Mirror Website to Drive
+
+on:
+  workflow_dispatch:  # manual trigger
+  # schedule: - cron: '0 0 * * 0'  # optional weekly
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create a release
+    steps:
+      - name: Mirror website with wget
+        run: |
+          mkdir -p mirrored-site
+          wget --mirror --convert-links --adjust-extension \
+               --page-requisites --no-parent \
+               --directory-prefix=mirrored-site \
+               https://en.wikipedia.org/wiki/Web_scraping   # change to your URL
+
+      - name: Create ZIP archive
+        run: zip -r mirrored-site.zip mirrored-site/
+
+      - name: Create GitHub Release and upload ZIP
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: mirror-${{ github.run_id }}
+          name: "Website Mirror ${{ github.run_id }}"
+          draft: false
+          prerelease: false
+          files: mirrored-site.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get the asset download URL
+        id: get_url
+        run: |
+          # The release action outputs the upload URL, but we need the download URL.
+          # We can construct it or fetch it via the GitHub API.
+          ASSET_URL=$(gh api repos/${{ github.repository }}/releases/tags/mirror-${{ github.run_id }} --jq '.assets[0].browser_download_url')
+          echo "DOWNLOAD_URL=$ASSET_URL" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send download URL to Google Apps Script
+        run: |
+          curl -X POST "https://script.google.com/macros/s/${{ secrets.GAS_DEPLOYMENT_ID }}/exec" \
+            -H "Content-Type: application/json" \
+            -d '{"downloadUrl": "${{ steps.get_url.outputs.DOWNLOAD_URL }}", "fileName": "mirrored-site.zip"}'
