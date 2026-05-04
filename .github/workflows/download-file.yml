@@ -1,0 +1,52 @@
+name: Download and Split File
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: 'Direct download URL'
+        required: true
+        type: string
+      request_id:
+        description: 'Unique request ID'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  split-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download file
+        run: |
+          curl -L -o original_file "${{ github.event.inputs.file_url }}"
+
+      - name: Split into 45MB parts
+        run: |
+          SIZE=$(stat -c%s "original_file")
+          if [ $SIZE -gt 45000000 ]; then
+            echo "File larger than 45MB, splitting..."
+            split -b 45m original_file part.
+            # Rename parts to part.aa, part.ab, etc.
+            ls part.* | while read f; do mv "$f" "${f}.part"; done
+            rm original_file
+            echo "SPLIT=true" >> $GITHUB_ENV
+          else
+            mv original_file file.zip
+            echo "SPLIT=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: file-${{ github.event.inputs.request_id }}
+          name: "File ${{ github.event.inputs.request_id }}"
+          draft: false
+          prerelease: false
+          files: |
+            part.*.part
+            file.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
