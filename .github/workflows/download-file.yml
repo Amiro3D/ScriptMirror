@@ -19,7 +19,7 @@ jobs:
   split-and-upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Download file with original name and timestamp
+      - name: Download file with original name
         run: |
           # Get filename from URL or Content-Disposition
           FILENAME=$(curl -s -L -I "${{ github.event.inputs.file_url }}" | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | tail -1)
@@ -29,25 +29,27 @@ jobs:
           if [ -z "$FILENAME" ]; then
             FILENAME="downloaded_file"
           fi
-          # Add timestamp
+          # Add timestamp to avoid collisions
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
           NAME="${FILENAME%.*}_${TIMESTAMP}.${FILENAME##*.}"
           curl -L -o "$NAME" "${{ github.event.inputs.file_url }}"
           echo "ORIGINAL_NAME=$NAME" >> $GITHUB_ENV
 
-      - name: Split into 45MB parts (if needed)
+      - name: Split into 45MB zip parts (if needed)
         run: |
-          SIZE=$(stat -c%s "$ORIGINAL_NAME")
-          if [ $SIZE -gt 45000000 ]; then
-            echo "File larger than 45MB, splitting..."
-            split -b 45m "$ORIGINAL_NAME" part.
+          MAX_SIZE=47185920  # 45 MiB in bytes
+          FILE_SIZE=$(stat -c%s "$ORIGINAL_NAME")
+          if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+            echo "File size $FILE_SIZE > 45MB, splitting into 45MB zip parts"
+            # Create a zip archive and split into 45MB segments
+            zip -s 45m "${ORIGINAL_NAME%.*}.zip" "$ORIGINAL_NAME"
+            # Remove the original large file
             rm "$ORIGINAL_NAME"
-            echo "SPLIT=true" >> $GITHUB_ENV
           else
-            echo "SPLIT=false" >> $GITHUB_ENV
+            echo "File size within limit (${FILE_SIZE} bytes), keeping as single file"
           fi
 
-      - name: Create GitHub Release with assets
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: file-${{ github.event.inputs.request_id }}
@@ -55,14 +57,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            part.*
             *.zip
-            *.tar.gz
-            *.tar
-            *.7z
-            *.pdf
-            *.jpg
-            *.png
-            *.*
+            *.z0*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
