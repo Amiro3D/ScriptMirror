@@ -19,7 +19,7 @@ jobs:
   split-and-upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Download file with original name
+      - name: Download file with original name and timestamp
         run: |
           # Get filename from URL or Content-Disposition
           FILENAME=$(curl -s -L -I "${{ github.event.inputs.file_url }}" | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | tail -1)
@@ -35,7 +35,7 @@ jobs:
           curl -L -o "$NAME" "${{ github.event.inputs.file_url }}"
           echo "ORIGINAL_NAME=$NAME" >> $GITHUB_ENV
 
-      - name: Split into 45MB parts
+      - name: Split into 45MB parts (if needed)
         run: |
           SIZE=$(stat -c%s "$ORIGINAL_NAME")
           if [ $SIZE -gt 45000000 ]; then
@@ -47,7 +47,7 @@ jobs:
             echo "SPLIT=false" >> $GITHUB_ENV
           fi
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release with assets
         uses: softprops/action-gh-release@v1
         with:
           tag_name: file-${{ github.event.inputs.request_id }}
