@@ -1,12 +1,15 @@
-name: Mirror Website to Drive
+name: Mirror Website
 
 on:
   workflow_dispatch:
     inputs:
       website_url:
-        description: 'URL of the website to mirror'
+        description: 'URL to mirror'
         required: true
-        default: 'https://en.wikipedia.org/wiki/Web_scraping'
+        type: string
+      request_id:
+        description: 'Unique request ID (e.g., UUID or timestamp)'
+        required: true
         type: string
 
 permissions:
@@ -27,28 +30,25 @@ jobs:
       - name: Create ZIP archive
         run: zip -r mirrored-site.zip mirrored-site/
 
-      - name: Create GitHub Release and upload ZIP
-        id: create_release
+      - name: Split ZIP into 45MB parts (if needed)
+        run: |
+          SIZE=$(stat -c%s "mirrored-site.zip")
+          if [ $SIZE -gt 45000000 ]; then
+            echo "File larger than 45MB, splitting..."
+            split -b 45m mirrored-site.zip mirrored-site.zip.part
+            rm mirrored-site.zip
+            echo "SPLIT=true" >> $GITHUB_ENV
+          else
+            echo "SPLIT=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create GitHub Release with unique tag
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: mirror-${{ github.run_id }}
-          name: "Mirror ${{ github.run_id }}"
+          tag_name: mirror-${{ github.event.inputs.request_id }}
+          name: "Mirror ${{ github.event.inputs.request_id }}"
           draft: false
           prerelease: false
-          files: mirrored-site.zip
+          files: mirrored-site.zip*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get asset download URL
-        id: get_url
-        run: |
-          ASSET_URL=$(gh api repos/${{ github.repository }}/releases/tags/mirror-${{ github.run_id }} --jq '.assets[0].browser_download_url')
-          echo "DOWNLOAD_URL=$ASSET_URL" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Send download URL to Google Apps Script
-        run: |
-          curl -X POST "${{ secrets.GAS_DEPLOYMENT_URL }}" \
-            -H "Content-Type: application/json" \
-            -d '{"downloadUrl": "${{ steps.get_url.outputs.DOWNLOAD_URL }}", "fileName": "mirrored-site.zip"}'
