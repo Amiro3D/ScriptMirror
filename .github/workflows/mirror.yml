@@ -20,27 +20,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download page and all static assets (no gzip)
+      - name: Download page and assets
         run: |
           mkdir -p mirrored-site
           wget -p -k -E -l 1 --no-parent --span-hosts \
-               --accept="*.html,*.css,*.js,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.webm" \
+               --accept="*.html,*.css,*.js,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.webm,*.ogg" \
                --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0" \
                --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
                --header="Accept-Language: en-US,en;q=0.5" \
                --header="Referer: https://www.google.com/" \
                --header="Upgrade-Insecure-Requests: 1" \
-               --header="Cache-Control: no-cache" \
                --retry-connrefused --tries=3 --timeout=30 \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Check if only index.html was downloaded
+      - name: Clean up filenames (remove query strings and .tmp)
         run: |
-          FILE_COUNT=$(find mirrored-site -type f | wc -l)
-          if [ $FILE_COUNT -eq 1 ] && find mirrored-site -name "index.html" | grep -q .; then
-            echo "⚠️ WARNING: Only index.html was downloaded. The site may be heavily dynamic or block automated requests."
-          fi
+          find mirrored-site -type f | while read f; do
+            # Remove .tmp from end of filename (from wget temporary files)
+            newname=$(echo "$f" | sed 's/\.tmp$//' | sed 's/\.tmp\(\.css\)$/\1/' | sed 's/\.tmp\(\.js\)$/\1/')
+            # Remove query parameters (anything after ?)
+            newname=$(echo "$newname" | sed 's/\?.*$//')
+            if [ "$f" != "$newname" ]; then
+              echo "Renaming: $f -> $newname"
+              mv "$f" "$newname" 2>/dev/null || true
+            fi
+          done
+
+      - name: Fix HTML links (convert absolute to relative)
+        run: |
+          find mirrored-site -name "*.html" -exec sed -i 's|https://[^/]*||g' {} \;
 
       - name: Create ZIP archive
         run: |
