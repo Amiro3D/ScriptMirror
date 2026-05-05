@@ -1,14 +1,14 @@
-name: Mirror Website
+name: Mirror Single Page
 
 on:
   workflow_dispatch:
     inputs:
       website_url:
-        description: 'URL to mirror'
+        description: 'URL of the page to mirror (single page + assets)'
         required: true
         type: string
       request_id:
-        description: 'Unique request ID (e.g., UUID or timestamp)'
+        description: 'Unique request ID'
         required: true
         type: string
 
@@ -18,12 +18,18 @@ permissions:
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Mirror website with wget
+      - name: Download single page and its assets
         run: |
           mkdir -p mirrored-site
-          wget --mirror --convert-links --adjust-extension \
-               --page-requisites --no-parent \
+          # -p: download page requisites (CSS, images, etc.)
+          # -k: convert links to local
+          # -E: adjust extension (.html)
+          # -l 1: only this page and its directly embedded assets, no other HTML pages
+          # --no-parent: stay inside the starting directory
+          # --span-hosts: allow loading assets from other domains (CDNs)
+          wget -p -k -E -l 1 --no-parent --span-hosts \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
@@ -35,20 +41,24 @@ jobs:
           SIZE=$(stat -c%s "mirrored-site.zip")
           if [ $SIZE -gt 45000000 ]; then
             echo "File larger than 45MB, splitting..."
-            split -b 45m mirrored-site.zip mirrored-site.zip.part
+            zip -s 45m mirrored-site.zip --out split.zip
             rm mirrored-site.zip
-            echo "SPLIT=true" >> $GITHUB_ENV
-          else
-            echo "SPLIT=false" >> $GITHUB_ENV
+            mv split.z* mirrored-site.zip.part* 2>/dev/null || true
           fi
 
-      - name: Create GitHub Release with unique tag
+      - name: List files for debugging
+        run: ls -la
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: mirror-${{ github.event.inputs.request_id }}
           name: "Mirror ${{ github.event.inputs.request_id }}"
           draft: false
           prerelease: false
-          files: mirrored-site.zip*
+          files: |
+            mirrored-site.zip*
+            *.zip
+            *.z*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
