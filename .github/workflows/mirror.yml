@@ -20,28 +20,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download page and assets with full browser headers
+      - name: Download page and all static assets (no gzip)
         run: |
           mkdir -p mirrored-site
           wget -p -k -E -l 1 --no-parent --span-hosts \
+               --accept="*.html,*.css,*.js,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.webm" \
                --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0" \
                --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
                --header="Accept-Language: en-US,en;q=0.5" \
-               --header="Accept-Encoding: gzip, deflate, br" \
                --header="Referer: https://www.google.com/" \
                --header="Upgrade-Insecure-Requests: 1" \
                --header="Cache-Control: no-cache" \
-               --header="Connection: keep-alive" \
                --retry-connrefused --tries=3 --timeout=30 \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Decompress all gzipped files (fix .js.gz, .css.gz, etc.)
+      - name: Check if only index.html was downloaded
         run: |
-          find mirrored-site -type f -name "*.gz" | while read gzfile; do
-            echo "Decompressing $gzfile"
-            gunzip -f "$gzfile"
-          done
+          FILE_COUNT=$(find mirrored-site -type f | wc -l)
+          if [ $FILE_COUNT -eq 1 ] && find mirrored-site -name "index.html" | grep -q .; then
+            echo "⚠️ WARNING: Only index.html was downloaded. The site may be heavily dynamic or block automated requests."
+          fi
 
       - name: Create ZIP archive
         run: |
