@@ -36,6 +36,13 @@ jobs:
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
+      - name: Decompress all gzipped files (fix .js.gz, .css.gz, etc.)
+        run: |
+          find mirrored-site -type f -name "*.gz" | while read gzfile; do
+            echo "Decompressing $gzfile"
+            gunzip -f "$gzfile"
+          done
+
       - name: Create ZIP archive
         run: |
           cd mirrored-site
