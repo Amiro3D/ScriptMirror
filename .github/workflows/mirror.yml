@@ -23,12 +23,6 @@ jobs:
       - name: Download single page and its assets
         run: |
           mkdir -p mirrored-site
-          # -p: download page requisites (CSS, images, etc.)
-          # -k: convert links to local
-          # -E: adjust extension (.html)
-          # -l 1: only this page and its directly embedded assets, no other HTML pages
-          # --no-parent: stay inside the starting directory
-          # --span-hosts: allow loading assets from other domains (CDNs)
           wget -p -k -E -l 1 --no-parent --span-hosts \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
@@ -36,13 +30,15 @@ jobs:
       - name: Create ZIP archive
         run: zip -r mirrored-site.zip mirrored-site/
 
-      - name: Split ZIP into 45MB parts (if needed)
+      - name: Split ZIP into 45MB parts (same method as file fetch)
         run: |
+          MAX_SIZE=47185920
           SIZE=$(stat -c%s "mirrored-site.zip")
-          if [ $SIZE -gt 45000000 ]; then
-            echo "File larger than 45MB, splitting..."
+          if [ $SIZE -gt $MAX_SIZE ]; then
+            echo "ZIP larger than 45MB, splitting..."
             zip -s 45m mirrored-site.zip --out split.zip
             rm mirrored-site.zip
+            # rename split.z01, split.z02, split.zip to clean names
             mv split.z* mirrored-site.zip.part* 2>/dev/null || true
           fi
 
