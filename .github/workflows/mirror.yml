@@ -20,30 +20,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Download single page and its assets
+      - name: Download page and all static assets
         run: |
           mkdir -p mirrored-site
-          wget -p -k -E -l 1 --no-parent --span-hosts \
+          wget -r -l 1 -p -k -E \
+               --no-parent \
+               --span-hosts \
+               --accept="*.html,*.css,*.js,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico" \
+               --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
       - name: Create ZIP archive
         run: zip -r mirrored-site.zip mirrored-site/
 
-      - name: Split ZIP into 45MB parts (same method as file fetch)
+      - name: Split ZIP if >45MB
         run: |
-          MAX_SIZE=47185920
           SIZE=$(stat -c%s "mirrored-site.zip")
-          if [ $SIZE -gt $MAX_SIZE ]; then
-            echo "ZIP larger than 45MB, splitting..."
+          if [ $SIZE -gt 47185920 ]; then
             zip -s 45m mirrored-site.zip --out split.zip
             rm mirrored-site.zip
-            # rename split.z01, split.z02, split.zip to clean names
             mv split.z* mirrored-site.zip.part* 2>/dev/null || true
           fi
 
-      - name: List files for debugging
-        run: ls -la
+      - name: List downloaded files (debug)
+        run: ls -la mirrored-site/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
