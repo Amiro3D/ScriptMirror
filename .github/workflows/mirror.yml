@@ -20,27 +20,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download single page and its assets (no other HTML)
+      - name: Download single page and its assets
         run: |
           mkdir -p mirrored-site
-          # -p : download page requisites (CSS, JS, images)
-          # -k : convert links for local viewing
-          # -E : add .html extension if missing
-          # --no-parent : stay under the starting URL
-          # --span-hosts : allow CDN assets
-          # --accept : include all common web files
-          wget -p -k -E \
-               --no-parent \
-               --span-hosts \
-               --accept="*.html,*.css,*.js,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf" \
+          wget -p -k -E -l 1 --no-parent --span-hosts \
                --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Create ZIP archive
-        run: zip -r mirrored-site.zip mirrored-site/
+      - name: Create ZIP archive (even if empty)
+        run: |
+          cd mirrored-site
+          zip -r ../mirrored-site.zip .
+          cd ..
+          ls -la mirrored-site.zip
 
-      - name: Split ZIP if >45MB (same method as file fetch)
+      - name: Split ZIP if >45MB
         run: |
           SIZE=$(stat -c%s "mirrored-site.zip")
           if [ $SIZE -gt 47185920 ]; then
@@ -50,8 +45,8 @@ jobs:
             mv split.z* mirrored-site.zip.part* 2>/dev/null || true
           fi
 
-      - name: List downloaded files (debug)
-        run: ls -la mirrored-site/
+      - name: List final assets
+        run: ls -la mirrored-site.zip*
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
