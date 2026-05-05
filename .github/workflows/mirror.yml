@@ -1,10 +1,10 @@
-name: Mirror Single Page
+name: Mirror Single Page (Static Only)
 
 on:
   workflow_dispatch:
     inputs:
       website_url:
-        description: 'URL of the page to mirror (single page + assets only)'
+        description: 'URL to mirror (static pages only)'
         required: true
         type: string
       request_id:
@@ -20,81 +20,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download page and assets
+      - name: Download page, assets, and scripts (level 2)
         run: |
           mkdir -p mirrored-site
-          wget -p -k -E -l 1 --no-parent --span-hosts \
-               --accept="*.html,*.css,*.js,*.json,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.webm,*.ogg" \
+          wget -r -l 2 -p -k -E --no-parent --span-hosts \
+               --accept="*.html,*.css,*.js,*.json,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf" \
+               --reject="*.gz" \
                --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0" \
                --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
                --header="Accept-Language: en-US,en;q=0.5" \
                --header="Referer: https://www.google.com/" \
-               --header="Upgrade-Insecure-Requests: 1" \
                --retry-connrefused --tries=3 --timeout=30 \
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Consolidate all files into one folder (fix broken paths)
+      - name: Remove query parameters from downloaded filenames
         run: |
-          # Find the main domain folder (the one containing index.html)
-          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
-          if [ -z "$MAIN_FOLDER" ]; then
-            echo "No index.html found"
-            exit 1
-          fi
-          echo "Main folder: $MAIN_FOLDER"
-          # Move everything from all other folders into MAIN_FOLDER
-          find mirrored-site -mindepth 1 -type d ! -path "$MAIN_FOLDER" | while read subdir; do
-            echo "Moving files from $subdir into $MAIN_FOLDER"
-            find "$subdir" -type f -exec mv {} "$MAIN_FOLDER/" \;
-          done
-          # Remove empty directories
-          find mirrored-site -type d -empty -delete
-          # Move any remaining files from the root (mirrored-site) into MAIN_FOLDER
-          find mirrored-site -maxdepth 1 -type f -exec mv {} "$MAIN_FOLDER/" \;
-          # The final website is now inside $MAIN_FOLDER
-          echo "Final structure: $MAIN_FOLDER"
-          ls -la "$MAIN_FOLDER"
-
-      - name: Clean filenames (remove .tmp and query strings)
-        run: |
-          # Find the main folder again (it may have been moved)
-          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
-          cd "$MAIN_FOLDER"
-          for f in *; do
-            # Remove .tmp and .tmp.css/.tmp.js
-            newname=$(echo "$f" | sed 's/\.tmp$//' | sed 's/\.tmp\(\.css\)$/\1/' | sed 's/\.tmp\(\.js\)$/\1/')
-            # Remove everything after ? in filename
-            newname=$(echo "$newname" | sed 's/\?.*$//')
+          find mirrored-site -type f | while read f; do
+            newname=$(echo "$f" | sed 's/\?.*//' | sed 's/\.tmp$//' | sed 's/\.tmp\(\.css\)$/\1/' | sed 's/\.tmp\(\.js\)$/\1/')
             if [ "$f" != "$newname" ]; then
-              echo "Renaming: $f -> $newname"
               mv "$f" "$newname" 2>/dev/null || true
             fi
           done
 
-      - name: Fix HTML links (remove absolute URLs and query parameters)
+      - name: Create ZIP (preserve full folder structure)
         run: |
-          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
-          cd "$MAIN_FOLDER"
-          # Replace absolute URLs (https://domain) with relative
-          find . -name "*.html" -exec sed -i 's|https://[^/]*||g' {} \;
-          # Remove ?dpl=... from any href/src attributes (simple hack)
-          find . -name "*.html" -exec sed -i 's/\?dpl=[^"&]*//g' {} \;
-
-      - name: Create ZIP archive from consolidated folder
-        run: |
-          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
-          cd "$MAIN_FOLDER"
-          zip -r ../final-site.zip .
+          cd mirrored-site
+          zip -r ../mirrored-site.zip .
           cd ..
-          mv final-site.zip ../mirrored-site.zip
-          cd ..
+          ls -la mirrored-site.zip
 
       - name: Split ZIP if >45MB
         run: |
           SIZE=$(stat -c%s "mirrored-site.zip")
           if [ $SIZE -gt 47185920 ]; then
-            echo "ZIP larger than 45MB, splitting..."
             zip -s 45m mirrored-site.zip --out split.zip
             rm mirrored-site.zip
             mv split.z* mirrored-site.zip.part* 2>/dev/null || true
