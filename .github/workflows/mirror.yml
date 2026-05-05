@@ -34,43 +34,34 @@ jobs:
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Flatten domain subfolders (fix broken asset paths)
-        run: |
-          # Move all files from domain-named subfolders (e.g., assets.leonardo.ai) into the root
-          find mirrored-site -mindepth 2 -type f | while read f; do
-            dir=$(dirname "$f")
-            base=$(basename "$f")
-            # Check if the parent directory looks like a domain (contains a dot)
-            if [[ "$(basename "$dir")" =~ \. ]]; then
-              echo "Moving $f -> mirrored-site/$base"
-              mv "$f" "mirrored-site/$base"
-            fi
-          done
-          # Remove empty directories
-          find mirrored-site -type d -empty -delete
-
       - name: Clean up filenames (remove query strings and .tmp)
         run: |
           find mirrored-site -type f | while read f; do
-            # Remove .tmp suffix
             newname=$(echo "$f" | sed 's/\.tmp$//' | sed 's/\.tmp\(\.css\)$/\1/' | sed 's/\.tmp\(\.js\)$/\1/')
-            # Remove query parameters
             newname=$(echo "$newname" | sed 's/\?.*$//')
             if [ "$f" != "$newname" ]; then
-              echo "Renaming: $f -> $newname"
               mv "$f" "$newname" 2>/dev/null || true
             fi
           done
 
-      - name: Fix HTML links (remove absolute URLs)
+      - name: Fix HTML links (remove absolute URLs and domain prefixes)
         run: |
           find mirrored-site -name "*.html" -exec sed -i 's|https://[^/]*||g' {} \;
 
-      - name: Create ZIP archive
+      - name: Identify the main domain folder (contains index.html)
+        id: find_domain
         run: |
-          cd mirrored-site
-          zip -r ../mirrored-site.zip .
-          cd ..
+          # Find the deepest index.html (likely the main page)
+          MAIN_HTML=$(find mirrored-site -name "*.html" | head -1)
+          MAIN_DIR=$(dirname "$MAIN_HTML")
+          echo "main_dir=$MAIN_DIR" >> $GITHUB_OUTPUT
+          echo "Zipping from $MAIN_DIR"
+
+      - name: Create ZIP from the domain folder (not the parent)
+        run: |
+          cd "${{ steps.find_domain.outputs.main_dir }}"
+          zip -r ../../mirrored-site.zip .
+          cd ../..
           ls -la mirrored-site.zip
 
       - name: Split ZIP if >45MB
