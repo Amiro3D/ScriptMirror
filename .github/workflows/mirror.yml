@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download page and assets
+      - name: Download page and all static assets
         run: |
           mkdir -p mirrored-site
           wget -p -k -E -l 1 --no-parent --span-hosts \
@@ -34,12 +34,27 @@ jobs:
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
+      - name: Flatten domain subfolders (fix broken asset paths)
+        run: |
+          # Move all files from domain-named subfolders (e.g., assets.leonardo.ai) into the root
+          find mirrored-site -mindepth 2 -type f | while read f; do
+            dir=$(dirname "$f")
+            base=$(basename "$f")
+            # Check if the parent directory looks like a domain (contains a dot)
+            if [[ "$(basename "$dir")" =~ \. ]]; then
+              echo "Moving $f -> mirrored-site/$base"
+              mv "$f" "mirrored-site/$base"
+            fi
+          done
+          # Remove empty directories
+          find mirrored-site -type d -empty -delete
+
       - name: Clean up filenames (remove query strings and .tmp)
         run: |
           find mirrored-site -type f | while read f; do
-            # Remove .tmp from end of filename (from wget temporary files)
+            # Remove .tmp suffix
             newname=$(echo "$f" | sed 's/\.tmp$//' | sed 's/\.tmp\(\.css\)$/\1/' | sed 's/\.tmp\(\.js\)$/\1/')
-            # Remove query parameters (anything after ?)
+            # Remove query parameters
             newname=$(echo "$newname" | sed 's/\?.*$//')
             if [ "$f" != "$newname" ]; then
               echo "Renaming: $f -> $newname"
@@ -47,7 +62,7 @@ jobs:
             fi
           done
 
-      - name: Fix HTML links (convert absolute to relative)
+      - name: Fix HTML links (remove absolute URLs)
         run: |
           find mirrored-site -name "*.html" -exec sed -i 's|https://[^/]*||g' {} \;
 
@@ -67,9 +82,6 @@ jobs:
             rm mirrored-site.zip
             mv split.z* mirrored-site.zip.part* 2>/dev/null || true
           fi
-
-      - name: List final assets
-        run: ls -la mirrored-site.zip* || true
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
