@@ -18,36 +18,70 @@ permissions:
 jobs:
   split-and-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Download file with original name
+      - name: Download file with proper headers
         run: |
+          echo "Downloading from: ${{ github.event.inputs.file_url }}"
+          
           # Get filename from URL or Content-Disposition
-          FILENAME=$(curl -s -L -I "${{ github.event.inputs.file_url }}" | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | tail -1)
+          FILENAME=$(curl -s -L -I "${{ github.event.inputs.file_url }}" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | tail -1)
+          
           if [ -z "$FILENAME" ]; then
             FILENAME=$(basename "${{ github.event.inputs.file_url }}" | cut -d '?' -f1)
           fi
           if [ -z "$FILENAME" ]; then
             FILENAME="downloaded_file"
           fi
-          # Add timestamp to avoid collisions
+          
+          # Add timestamp
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
           NAME="${FILENAME%.*}_${TIMESTAMP}.${FILENAME##*.}"
-          curl -L -o "$NAME" "${{ github.event.inputs.file_url }}"
+          
+          echo "Target filename: $NAME"
+          
+          # Download with proper headers and show progress
+          curl -L -o "$NAME" "${{ github.event.inputs.file_url }}" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+            -H "Accept-Language: en-US,en;q=0.5" \
+            --progress-bar
+          
+          # Check if download succeeded
+          if [ ! -f "$NAME" ]; then
+            echo "ERROR: Download failed - file not found"
+            exit 1
+          fi
+          
+          FILE_SIZE=$(stat -c%s "$NAME")
+          echo "Downloaded file size: $FILE_SIZE bytes"
           echo "ORIGINAL_NAME=$NAME" >> $GITHUB_ENV
 
       - name: Split into 45MB zip parts (if needed)
         run: |
           MAX_SIZE=47185920  # 45 MiB in bytes
           FILE_SIZE=$(stat -c%s "$ORIGINAL_NAME")
+          
           if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
             echo "File size $FILE_SIZE > 45MB, splitting into 45MB zip parts"
             # Create a zip archive and split into 45MB segments
             zip -s 45m "${ORIGINAL_NAME%.*}.zip" "$ORIGINAL_NAME"
             # Remove the original large file
             rm "$ORIGINAL_NAME"
+            echo "Split completed"
+            ls -la *.zip *.z* 2>/dev/null || echo "No split files found"
           else
             echo "File size within limit (${FILE_SIZE} bytes), keeping as single file"
+            # Rename to .zip for consistency
+            mv "$ORIGINAL_NAME" "${ORIGINAL_NAME}.zip"
           fi
+
+      - name: List files before release
+        run: |
+          echo "Files to upload:"
+          ls -la *.zip *.z* 2>/dev/null || echo "No files found"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -58,6 +92,6 @@ jobs:
           prerelease: false
           files: |
             *.zip
-            *.z0*
+            *.z*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
