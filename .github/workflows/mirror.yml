@@ -28,7 +28,7 @@ jobs:
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Create ZIP archive (even if empty)
+      - name: Create ZIP archive
         run: |
           cd mirrored-site
           zip -r ../mirrored-site.zip .
@@ -46,18 +46,19 @@ jobs:
           fi
 
       - name: List final assets
-        run: ls -la mirrored-site.zip*
+        run: ls -la mirrored-site.zip* || true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: mirror-${{ github.event.inputs.request_id }}
-          name: "Mirror ${{ github.event.inputs.request_id }}"
-          draft: false
-          prerelease: false
-          files: |
-            mirrored-site.zip*
-            *.zip
-            *.z*
+      - name: Create GitHub Release and upload assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="mirror-${{ github.event.inputs.request_id }}"
+          # Create the release (or update if exists)
+          gh release create "$TAG" --title "Mirror ${{ github.event.inputs.request_id }}" --notes "Mirrored page" --draft=false --prerelease=false || true
+          # Upload all matching files (single zip or split parts)
+          for file in mirrored-site.zip*; do
+            if [ -f "$file" ]; then
+              echo "Uploading $file"
+              gh release upload "$TAG" "$file" --clobber
+            fi
+          done
