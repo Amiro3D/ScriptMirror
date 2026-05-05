@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download page and all static assets
+      - name: Download page and assets
         run: |
           mkdir -p mirrored-site
           wget -p -k -E -l 1 --no-parent --span-hosts \
-               --accept="*.html,*.css,*.js,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.webm,*.ogg" \
+               --accept="*.html,*.css,*.js,*.json,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.webp,*.ico,*.woff,*.woff2,*.ttf,*.mp4,*.webm,*.ogg" \
                --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0" \
                --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
                --header="Accept-Language: en-US,en;q=0.5" \
@@ -34,35 +34,61 @@ jobs:
                --directory-prefix=mirrored-site \
                "${{ github.event.inputs.website_url }}"
 
-      - name: Clean up filenames (remove query strings and .tmp)
+      - name: Consolidate all files into one folder (fix broken paths)
         run: |
-          find mirrored-site -type f | while read f; do
+          # Find the main domain folder (the one containing index.html)
+          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
+          if [ -z "$MAIN_FOLDER" ]; then
+            echo "No index.html found"
+            exit 1
+          fi
+          echo "Main folder: $MAIN_FOLDER"
+          # Move everything from all other folders into MAIN_FOLDER
+          find mirrored-site -mindepth 1 -type d ! -path "$MAIN_FOLDER" | while read subdir; do
+            echo "Moving files from $subdir into $MAIN_FOLDER"
+            find "$subdir" -type f -exec mv {} "$MAIN_FOLDER/" \;
+          done
+          # Remove empty directories
+          find mirrored-site -type d -empty -delete
+          # Move any remaining files from the root (mirrored-site) into MAIN_FOLDER
+          find mirrored-site -maxdepth 1 -type f -exec mv {} "$MAIN_FOLDER/" \;
+          # The final website is now inside $MAIN_FOLDER
+          echo "Final structure: $MAIN_FOLDER"
+          ls -la "$MAIN_FOLDER"
+
+      - name: Clean filenames (remove .tmp and query strings)
+        run: |
+          # Find the main folder again (it may have been moved)
+          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
+          cd "$MAIN_FOLDER"
+          for f in *; do
+            # Remove .tmp and .tmp.css/.tmp.js
             newname=$(echo "$f" | sed 's/\.tmp$//' | sed 's/\.tmp\(\.css\)$/\1/' | sed 's/\.tmp\(\.js\)$/\1/')
+            # Remove everything after ? in filename
             newname=$(echo "$newname" | sed 's/\?.*$//')
             if [ "$f" != "$newname" ]; then
+              echo "Renaming: $f -> $newname"
               mv "$f" "$newname" 2>/dev/null || true
             fi
           done
 
-      - name: Fix HTML links (remove absolute URLs and domain prefixes)
+      - name: Fix HTML links (remove absolute URLs and query parameters)
         run: |
-          find mirrored-site -name "*.html" -exec sed -i 's|https://[^/]*||g' {} \;
+          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
+          cd "$MAIN_FOLDER"
+          # Replace absolute URLs (https://domain) with relative
+          find . -name "*.html" -exec sed -i 's|https://[^/]*||g' {} \;
+          # Remove ?dpl=... from any href/src attributes (simple hack)
+          find . -name "*.html" -exec sed -i 's/\?dpl=[^"&]*//g' {} \;
 
-      - name: Identify the main domain folder (contains index.html)
-        id: find_domain
+      - name: Create ZIP archive from consolidated folder
         run: |
-          # Find the deepest index.html (likely the main page)
-          MAIN_HTML=$(find mirrored-site -name "*.html" | head -1)
-          MAIN_DIR=$(dirname "$MAIN_HTML")
-          echo "main_dir=$MAIN_DIR" >> $GITHUB_OUTPUT
-          echo "Zipping from $MAIN_DIR"
-
-      - name: Create ZIP from the domain folder (not the parent)
-        run: |
-          cd "${{ steps.find_domain.outputs.main_dir }}"
-          zip -r ../../mirrored-site.zip .
-          cd ../..
-          ls -la mirrored-site.zip
+          MAIN_FOLDER=$(find mirrored-site -name "index.html" -printf "%h\n" | head -1)
+          cd "$MAIN_FOLDER"
+          zip -r ../final-site.zip .
+          cd ..
+          mv final-site.zip ../mirrored-site.zip
+          cd ..
 
       - name: Split ZIP if >45MB
         run: |
@@ -74,7 +100,7 @@ jobs:
             mv split.z* mirrored-site.zip.part* 2>/dev/null || true
           fi
 
-      - name: Create GitHub Release and upload assets
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mirror-${{ github.event.inputs.request_id }}
