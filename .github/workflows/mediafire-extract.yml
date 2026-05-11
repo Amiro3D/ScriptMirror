@@ -20,66 +20,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Install mediafire-dl
-        run: |
-          pip install mediafire-dl
-
       - name: Extract MediaFire direct link
         id: extract
         run: |
           MEDIAFIRE_URL="${{ github.event.inputs.mediafire_url }}"
           
-          # Use mediafire-dl to get the direct link without downloading
-          python << 'EOF'
-          import subprocess
-          import re
-          import json
+          # Use an alternative API (vxmediafire - public instance)
+          API_URL="https://api.vxparser.com/mediafire?url=$(echo -n "$MEDIAFIRE_URL" | jq -sRr @uri)"
           
-          url = "${{ github.event.inputs.mediafire_url }}"
+          RESPONSE=$(curl -s "$API_URL")
+          DIRECT_URL=$(echo "$RESPONSE" | jq -r '.direct_link // .url // empty')
           
-          # Run mediafire-dl to get direct link
-          result = subprocess.run(['mediafire-dl', '--get-url', url], 
-                                  capture_output=True, text=True)
+          if [ -z "$DIRECT_URL" ] || [ "$DIRECT_URL" = "null" ]; then
+            # Fallback to direct scraping
+            echo "API failed, falling back to direct scraping..."
+            HTML=$(curl -s -L -b /tmp/cookies.txt -c /tmp/cookies.txt \
+              -H "User-Agent: Mozilla/5.0" "$MEDIAFIRE_URL")
+            
+            # Extract download link
+            DIRECT_URL=$(echo "$HTML" | grep -oP 'https?://download[^\s"]+' | head -1)
+            if [ -z "$DIRECT_URL" ]; then
+              DIRECT_URL=$(echo "$HTML" | grep -oP 'https?://[^"]*mediafire[^"]*download[^"]*' | head -1)
+            fi
+          fi
           
-          output = result.stdout
+          if [ -z "$DIRECT_URL" ]; then
+            echo "ERROR: Could not extract direct link"
+            exit 1
+          fi
           
-          # Extract direct URL from output
-          match = re.search(r'https?://[^\s]+', output)
-          direct_url = match.group(0) if match else ''
-          
-          # Extract filename from URL
-          filename = direct_url.split('/')[-1].split('?')[0]
-          
-          if not direct_url:
-              # Alternative: use curl as fallback
-              import requests
-              response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-              html = response.text
-              # Find download link patterns
-              patterns = [
-                  r'downloadButton["\']\s*data-link=["\']([^"\']+)',
-                  r'<a[^>]+href=["\']([^"\']+download[^"\']+)',
-              ]
-              for pattern in patterns:
-                  match = re.search(pattern, html)
-                  if match:
-                      direct_url = match.group(1)
-                      if direct_url.startswith('//'):
-                          direct_url = 'https:' + direct_url
-                      break
-          
-          # Save to GitHub output
-          with open('/tmp/direct_url.txt', 'w') as f:
-              f.write(direct_url)
-          with open('/tmp/filename.txt', 'w') as f:
-              f.write(filename)
-          
-          print(f"direct_url={direct_url}")
-          print(f"filename={filename}")
-          EOF
-          
-          DIRECT_URL=$(cat /tmp/direct_url.txt)
-          FILENAME=$(cat /tmp/filename.txt)
+          # Get filename
+          FILENAME=$(curl -s -I "$DIRECT_URL" | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | head -1)
+          if [ -z "$FILENAME" ]; then
+            FILENAME=$(basename "$DIRECT_URL" | cut -d '?' -f1)
+          fi
           
           echo "direct_url=$DIRECT_URL" >> $GITHUB_OUTPUT
           echo "filename=$FILENAME" >> $GITHUB_OUTPUT
