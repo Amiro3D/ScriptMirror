@@ -1,0 +1,71 @@
+name: Extract MediaFire Direct Link
+
+on:
+  workflow_dispatch:
+    inputs:
+      mediafire_url:
+        description: 'MediaFire share URL'
+        required: true
+        type: string
+      request_id:
+        description: 'Unique request ID'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      direct_url: ${{ steps.extract.outputs.direct_url }}
+      filename: ${{ steps.extract.outputs.filename }}
+      filesize: ${{ steps.extract.outputs.filesize }}
+    steps:
+      - name: Install direct-download
+        run: pip install Direct-Download
+
+      - name: Extract MediaFire direct link
+        id: extract
+        run: |
+          python << 'EOF'
+          import os
+          import json
+          from Direct_Download import Direct
+          
+          downloader = Direct()
+          result = downloader.mediafire('${{ github.event.inputs.mediafire_url }}', download=False)
+          
+          direct_url = ''
+          filename = 'mediafire_file'
+          filesize = 'unknown'
+          
+          if isinstance(result, dict):
+              direct_url = result.get('direct_link', result.get('url', ''))
+              filename = result.get('filename', 'mediafire_file')
+              filesize = str(result.get('filesize', 'unknown'))
+          else:
+              direct_url = str(result)
+          
+          print(f"Extracted direct URL: {direct_url}")
+          print(f"Filename: {filename}")
+          
+          # Save to GitHub output
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"direct_url={direct_url}\n")
+              f.write(f"filename={filename}\n")
+              f.write(f"filesize={filesize}\n")
+          EOF
+
+      - name: Send direct link to Apps Script
+        run: |
+          curl -X POST "${{ secrets.GAS_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "request_id": "${{ github.event.inputs.request_id }}",
+              "direct_url": "${{ steps.extract.outputs.direct_url }}",
+              "filename": "${{ steps.extract.outputs.filename }}",
+              "type": "mediafire_callback"
+            }'
