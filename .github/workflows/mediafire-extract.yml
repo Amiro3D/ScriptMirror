@@ -19,53 +19,56 @@ jobs:
   extract:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      direct_url: ${{ steps.extract.outputs.direct_url }}
-      filename: ${{ steps.extract.outputs.filename }}
-      filesize: ${{ steps.extract.outputs.filesize }}
     steps:
-      - name: Install direct-download
-        run: pip install Direct-Download
-
-      - name: Extract MediaFire direct link
+      - name: Extract MediaFire direct link with curl
         id: extract
         run: |
-          python << 'EOF'
-          import os
-          import json
-          from Direct_Download import Direct
+          MEDIAFIRE_URL="${{ github.event.inputs.mediafire_url }}"
+          echo "Processing: $MEDIAFIRE_URL"
           
-          downloader = Direct()
-          result = downloader.mediafire('${{ github.event.inputs.mediafire_url }}', download=False)
+          # Fetch the MediaFire page
+          RESPONSE=$(curl -s -L -b /tmp/cookies.txt -c /tmp/cookies.txt \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            "$MEDIAFIRE_URL")
           
-          direct_url = ''
-          filename = 'mediafire_file'
-          filesize = 'unknown'
+          # Extract the direct download link using grep and sed
+          # MediaFire stores the download link in a JavaScript variable or data-link attribute
+          DIRECT_URL=$(echo "$RESPONSE" | grep -oP 'downloadButton[^"]*"\Khttps?://[^"]+' | head -1)
           
-          if isinstance(result, dict):
-              direct_url = result.get('direct_link', result.get('url', ''))
-              filename = result.get('filename', 'mediafire_file')
-              filesize = str(result.get('filesize', 'unknown'))
-          else:
-              direct_url = str(result)
+          if [ -z "$DIRECT_URL" ]; then
+            # Alternative: look for data-link or href in download button
+            DIRECT_URL=$(echo "$RESPONSE" | grep -oP 'data-link="\K[^"]+' | head -1)
+          fi
           
-          print(f"Extracted direct URL: {direct_url}")
-          print(f"Filename: {filename}")
+          if [ -z "$DIRECT_URL" ]; then
+            # Another pattern: look for link in the download div
+            DIRECT_URL=$(echo "$RESPONSE" | grep -oP 'https?://[^"]*download[^"]*' | head -1)
+          fi
           
-          # Save to GitHub output
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"direct_url={direct_url}\n")
-              f.write(f"filename={filename}\n")
-              f.write(f"filesize={filesize}\n")
-          EOF
+          if [ -z "$DIRECT_URL" ]; then
+            echo "Failed to extract direct link"
+            exit 1
+          fi
+          
+          # Extract filename
+          FILENAME=$(curl -s -I "$DIRECT_URL" | grep -i 'content-disposition' | grep -oP 'filename="?\K[^"]+' | head -1)
+          if [ -z "$FILENAME" ]; then
+            FILENAME=$(basename "$DIRECT_URL" | cut -d '?' -f1)
+          fi
+          
+          echo "Direct URL: $DIRECT_URL"
+          echo "Filename: $FILENAME"
+          
+          echo "direct_url=$DIRECT_URL" >> $GITHUB_OUTPUT
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
 
       - name: Send direct link to Apps Script
         run: |
           curl -X POST "${{ secrets.GAS_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             -d '{
+              "type": "mediafire_callback",
               "request_id": "${{ github.event.inputs.request_id }}",
               "direct_url": "${{ steps.extract.outputs.direct_url }}",
-              "filename": "${{ steps.extract.outputs.filename }}",
-              "type": "mediafire_callback"
+              "filename": "${{ steps.extract.outputs.filename }}"
             }'
